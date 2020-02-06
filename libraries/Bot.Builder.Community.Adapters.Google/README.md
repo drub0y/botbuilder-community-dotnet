@@ -193,7 +193,7 @@ using Microsoft.Bot.Builder;
 
 #### Inject Google Adapter and Google Adapter Options In Your Bot Startup.cs
 
-1. Add the following code into the ***ConfigureServices*** method within your Startup.cs file, which will register your Google adapter and make it available for your new controller class. We will also create and register a ***AlexaAdapterOptions*** class, which will contain necessary information for your adapter to function correctly.  You need to replace "YOUR-ACTION-DISPLAY-NAME" with the display name you gave to your action, which you also specified in your action package in the earlier step. You also need to replace "YOUR-PROJECT-ID" with the ID of your **Actions on Google** project - you can find this at the end of the **gactions** cli command you made a note of in an earlier step.
+1. Add the following code into the ***ConfigureServices*** method within your Startup.cs file, which will register your Google adapter and make it available for your new controller class. We will also create and register a ***GoogleAdapterOptions*** class, which will contain necessary information for your adapter to function correctly.  You need to replace "YOUR-ACTION-DISPLAY-NAME" with the display name you gave to your action, which you also specified in your action package in the earlier step. You also need to replace "YOUR-PROJECT-ID" with the ID of your **Actions on Google** project - you can find this at the end of the **gactions** cli command you made a note of in an earlier step.
 
 ```csharp
     // Create the Google Adapter
@@ -248,10 +248,10 @@ using Bot.Builder.Community.Adapters.Google;
 
 Now that you have wired up the adapter in your bot project, the final steps are to configure the endpoint, in your action package, to which requests will be posted to when your action is invoked, pointing it to the correct endpoint on your bot.
 
-1. To complete this step, [deploy your bot to Azure](https://aka.ms/bot-builder-deploy-az-cli) and make a note of the URL to your deployed bot. Your Google messaging endpoint is the URL for your bot, which will be the URL of your deployed application (or ngrok endpoint), plus '/api/alexa' (for example, `https://yourbotapp.azurewebsites.net/api/Google`).
+1. To complete this step, [deploy your bot to Azure](https://aka.ms/bot-builder-deploy-az-cli) and make a note of the URL to your deployed bot. Your Google messaging endpoint is the URL for your bot, which will be the URL of your deployed application (or ngrok endpoint), plus '/api/google' (for example, `https://yourbotapp.azurewebsites.net/api/Google`).
 
 > [!NOTE]
-> If you are not ready to deploy your bot to Azure, or wish to debug your bot when using the Alexa adapter, you can use a tool such as [ngrok](https://www.ngrok.com) (which you will likely already have installed if you have used the Bot Framework emulator previously) to tunnel through to your bot running locally and provide you with a publicly accessible URL for this. 
+> If you are not ready to deploy your bot to Azure, or wish to debug your bot when using the Google adapter, you can use a tool such as [ngrok](https://www.ngrok.com) (which you will likely already have installed if you have used the Bot Framework emulator previously) to tunnel through to your bot running locally and provide you with a publicly accessible URL for this. 
 > 
 > If you wish create an ngrok tunnel and obtain a URL to your bot, use the following command in a terminal window (this assumes your local bot is running on port 3978, alter the port numbers in the command if your bot is not).
 > 
