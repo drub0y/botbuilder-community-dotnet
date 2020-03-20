@@ -1,6 +1,6 @@
-﻿using System;
-using System.Threading.Tasks;
+﻿using System.Threading.Tasks;
 using Alexa.NET.Request;
+using Bot.Builder.Community.Adapters.Alexa.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -8,43 +8,22 @@ namespace Bot.Builder.Community.Adapters.Alexa
 {
     internal class ValidationHelper
     {
-        public static async Task<bool> ValidateRequest(HttpRequest request, SkillRequest skillRequest, string body, ILogger logger)
-        { 
-            request.Headers.TryGetValue("SignatureCertChainUrl", out var signatureChainUrl);
-            if (string.IsNullOrWhiteSpace(signatureChainUrl))
-            {
-                logger.LogError("Validation failed due to empty SignatureCertChainUrl header");
+        public static async Task<bool> ValidateRequest(HttpRequest request, SkillRequest skillRequest, string body, string alexaSkillId, ILogger logger)
+        {
+            request.Headers.TryGetValue(AlexaAuthorizationHandler.SignatureCertChainUrlHeader, out var signatureChainUrls);
+            request.Headers.TryGetValue(AlexaAuthorizationHandler.SignatureHeader, out var signatureHeaders);
+
+            var validator = new AlexaAuthorizationHandler(logger);
+
+            if (!await validator.ValidateSkillRequest(skillRequest, body, signatureChainUrls, signatureHeaders).ConfigureAwait(false))
                 return false;
-            }
 
-            Uri certUrl;
-            try
-            {
-                certUrl = new Uri(signatureChainUrl);
-            }
-            catch
-            {
-                logger.LogError($"Validation failed. SignatureChainUrl not valid: {signatureChainUrl}");
-                return false;
-            }
+            // Alexa recommends you verify the Skill Id. Some bot developers use the same bot to service multiple skills. In this case they do their own validation
+            // and set this value to null.
+            if (alexaSkillId == null)
+                return true;
 
-            request.Headers.TryGetValue("Signature", out var signature);
-            if (string.IsNullOrWhiteSpace(signature))
-            {
-                logger.LogError("Validation failed - Empty Signature header");
-                return false;
-            }
-
-            var isTimestampValid = RequestVerification.RequestTimestampWithinTolerance(skillRequest);
-            var valid = await RequestVerification.Verify(signature, certUrl, body);
-
-            if (!valid || !isTimestampValid)
-            {
-                logger.LogError("Validation failed - RequestVerification failed");
-                return false;
-            }
-
-            return true;
+            return validator.ValidateSkillId(skillRequest, alexaSkillId);
         }
     }
 }

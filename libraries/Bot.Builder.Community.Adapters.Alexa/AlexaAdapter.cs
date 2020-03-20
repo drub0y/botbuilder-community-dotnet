@@ -22,8 +22,6 @@ namespace Bot.Builder.Community.Adapters.Alexa
 {
     public class AlexaAdapter : BotAdapter, IBotFrameworkHttpAdapter
     {
-        internal const string BotIdentityKey = "BotIdentity";
-
         private static readonly JsonSerializerSettings JsonSerializerSettings = new JsonSerializerSettings
         {
             ContractResolver = new CamelCasePropertyNamesContractResolver(),
@@ -33,11 +31,17 @@ namespace Bot.Builder.Community.Adapters.Alexa
 
         private readonly AlexaAdapterOptions _options;
         private readonly ILogger _logger;
+        private readonly AlexaRequestMapper _requestMapper;
 
         public AlexaAdapter(AlexaAdapterOptions options = null, ILogger logger = null)
         {
             _options = options ?? new AlexaAdapterOptions();
             _logger = logger ?? NullLogger.Instance;
+
+            _requestMapper = new AlexaRequestMapper(new AlexaRequestMapperOptions
+            {
+                ShouldEndSessionByDefault = _options.ShouldEndSessionByDefault
+            });
         }
 
         public async Task ProcessAsync(HttpRequest httpRequest, HttpResponse httpResponse, IBot bot, CancellationToken cancellationToken = default)
@@ -71,7 +75,7 @@ namespace Bot.Builder.Community.Adapters.Alexa
             }
 
             if (_options.ValidateIncomingAlexaRequests
-                && !await ValidationHelper.ValidateRequest(httpRequest, skillRequest, body, _logger))
+                && !await ValidationHelper.ValidateRequest(httpRequest, skillRequest, body, _options.AlexaSkillId, _logger))
             {
                 throw new AuthenticationException("Failed to validate incoming request.");
             }
@@ -87,7 +91,6 @@ namespace Bot.Builder.Community.Adapters.Alexa
             httpResponse.StatusCode = (int)HttpStatusCode.OK;
 
             var responseJson = JsonConvert.SerializeObject(alexaResponse, JsonSerializerSettings);
-
             var responseData = Encoding.UTF8.GetBytes(responseJson);
             await httpResponse.Body.WriteAsync(responseData, 0, responseData.Length, cancellationToken).ConfigureAwait(false);
         }
@@ -146,19 +149,20 @@ namespace Bot.Builder.Community.Adapters.Alexa
             var activities = context.SentActivities;
 
             var outgoingActivity = ProcessOutgoingActivities(activities);
-            var response = AlexaHelper.CreateResponseFromActivity(outgoingActivity, alexaRequest, _options.ShouldEndSessionByDefault);
+
+            var response = _requestMapper.ActivityToResponse(outgoingActivity, alexaRequest);
 
             return response;
         }
 
         public virtual Activity ProcessOutgoingActivities(List<Activity> activities)
         {
-            return AlexaHelper.ProcessOutgoingActivities(activities);
+            return _requestMapper.MergeActivities(activities);
         }
 
         public virtual Activity RequestToActivity(SkillRequest request)
         {
-            return AlexaHelper.RequestToActivity(request);
+            return _requestMapper.RequestToActivity(request);
         }
 
         public override Task<ResourceResponse[]> SendActivitiesAsync(ITurnContext turnContext, Activity[] activities, CancellationToken cancellationToken)
