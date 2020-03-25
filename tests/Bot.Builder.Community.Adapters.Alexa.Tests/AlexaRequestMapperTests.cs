@@ -8,6 +8,11 @@ using Microsoft.Bot.Schema;
 using Microsoft.Extensions.Logging;
 using Moq;
 using System.Collections.Generic;
+using System.Text;
+using Alexa.NET.Response.Directive;
+using Alexa.NET.Response.Directive.Templates;
+using Alexa.NET.Response.Directive.Templates.Types;
+using Bot.Builder.Community.Adapters.Alexa.Core.Attachments;
 using Xunit;
 
 namespace Bot.Builder.Community.Adapters.Alexa.Tests
@@ -93,6 +98,21 @@ namespace Bot.Builder.Community.Adapters.Alexa.Tests
         }
 
         [Fact]
+        public void MergeActivitiesIgnoresNonMessageActivities()
+        {
+            var alexaAdapter = new AlexaRequestMapper();
+
+            var firstActivity = MessageFactory.Text("This is the first activity.");
+            var traceActivity = Activity.CreateTraceActivity("This is a trace") as Activity;
+            var secondActivity = MessageFactory.Text("This is the second activity");
+            var typingActivity = Activity.CreateTypingActivity() as Activity;
+
+            var processActivityResult = alexaAdapter.MergeActivities(new List<Activity>() { firstActivity, traceActivity, secondActivity, typingActivity });
+
+            Assert.Equal("This is the first activity. This is the second activity", processActivityResult.Text);
+        }
+
+        [Fact]
         public void MergeActivitiesReturnsCorrectlyJoinedSpeakWithSsml()
         {
             var alexaAdapter = new AlexaRequestMapper();
@@ -106,6 +126,42 @@ namespace Bot.Builder.Community.Adapters.Alexa.Tests
             var processActivityResult = alexaAdapter.MergeActivities(new List<Activity>() { firstActivity, secondActivity });
 
             Assert.Equal("<speak>This is<break strength=\"strong\"/>the first activity SSML<break strength=\"strong\"/>This is the second activity SSML</speak>", 
+                processActivityResult.Speak);
+        }
+
+        [Fact]
+        public void MergeActivitiesCorrectlyConvertsMarkdownToPlainText()
+        {
+            var alexaAdapter = new AlexaRequestMapper();
+
+            // Note: The input activities deliberately have an activity where the speak tag
+            // is included and one activity where it is not, to ensure the stripping / wrapping
+            // of the speak tag is handled correctly.
+
+            var message = new StringBuilder();
+            message.AppendLine("**This** ~~is~~ ***the*** first activity.");
+            message.AppendLine("# Heading 1");
+            message.AppendLine("This is another paragraph.");
+            message.AppendLine("- Item 1");
+            message.AppendLine("- Item 2");
+            message.AppendLine("- Item 3");
+            message.AppendLine("");
+            message.AppendLine("## Heading 2");
+            message.AppendLine("1. Item 1");
+            message.AppendLine("2. Item 2");
+            message.AppendLine("3. Item 3");
+            message.AppendLine("");
+            message.AppendLine("More info [visit our web site](www.microsoft.com)");
+
+            var firstActivity = MessageFactory.Text(message.ToString(), "This is<break strength=\"strong\"/>the first activity SSML");
+            var secondActivity = MessageFactory.Text("This is the second activity.", "<speak>This is the second activity SSML</speak>");
+
+            var processActivityResult = alexaAdapter.MergeActivities(new List<Activity>() { firstActivity, secondActivity });
+
+            Assert.Equal("This is the first activity. Heading 1. This is another paragraph. Item 1, Item 2, Item 3. Heading 2. 1. Item 1, 2. Item 2, 3. Item 3. More info visit our web site www.microsoft.com. This is the second activity",
+                processActivityResult.Text);
+
+            Assert.Equal("<speak>This is<break strength=\"strong\"/>the first activity SSML<break strength=\"strong\"/>This is the second activity SSML</speak>",
                 processActivityResult.Speak);
         }
 
@@ -147,6 +203,55 @@ namespace Bot.Builder.Community.Adapters.Alexa.Tests
             var convertedActivity = mapper.RequestToActivity(skillRequest);
 
             VerifyIntentRequest(skillRequest, convertedActivity, mapperOptions);
+        }
+
+        [Fact]
+        public void MessageActivityWithAlexaCardDirectiveAttachmentsConverted()
+        {
+            var skillRequest = SkillRequestUtility.CreateIntentRequest();
+            var mapper = new AlexaRequestMapper();
+
+            var activity = Activity.CreateMessageActivity() as Activity;
+            activity.Text = "Hello world";
+
+            var hintDirective = new HintDirective("hint text");
+            
+            var displayDirective = new DisplayRenderTemplateDirective()
+            {
+                Template = new BodyTemplate1()
+                {
+                    BackgroundImage = new TemplateImage()
+                    {
+                        ContentDescription = "Test",
+                        Sources = new List<ImageSource>()
+                        {
+                            new ImageSource()
+                            {
+                                Url = "https://via.placeholder.com/576.png/09f/fff",
+                            }
+                        }
+                    },
+                    Content = new TemplateContent()
+                    {
+                        Primary = new TemplateText() { Text = "Test", Type = "PlainText" }
+                    },
+                    Title = "Test title",
+                }
+            };
+
+            var simpleCard = new SimpleCard()
+            {
+                Title = "This is a simple card",
+                Content = "This is the simple card content"
+            };
+
+            activity.Attachments.Add(hintDirective.ToAttachment());
+            activity.Attachments.Add(displayDirective.ToAttachment());
+            activity.Attachments.Add(simpleCard.ToAttachment());
+
+            var skillResponse = mapper.ActivityToResponse(activity, skillRequest);
+
+            VerifyCardAttachmentAndDirectiveResponse(skillResponse, simpleCard, new List<IDirective>() { hintDirective, displayDirective });
         }
 
         private static void VerifyIntentRequest(SkillRequest skillRequest, IActivity activity, AlexaRequestMapperOptions mapperOptions)
@@ -201,6 +306,17 @@ namespace Bot.Builder.Community.Adapters.Alexa.Tests
             Assert.Null(skillResponse.Response.Reprompt);
             Assert.Equal(true as bool?, skillResponse.Response.ShouldEndSession);
             Assert.Null(skillResponse.SessionAttributes);
+        }
+
+        private static void VerifyCardAttachmentAndDirectiveResponse(SkillResponse skillResponse, ICard card, IList<IDirective> directives)
+        {
+            Assert.Equal(card, skillResponse.Response.Card);
+            Assert.Equal(directives.Count, skillResponse.Response.Directives.Count);
+
+            foreach (var directive in directives)
+            {
+                Assert.True(skillResponse.Response.Directives.Contains(directive));
+            }
         }
     }
 }

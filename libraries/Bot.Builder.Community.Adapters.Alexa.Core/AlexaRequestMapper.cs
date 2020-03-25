@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Security;
 using System.Xml;
@@ -7,6 +8,7 @@ using Alexa.NET.Request;
 using Alexa.NET.Request.Type;
 using Alexa.NET.Response;
 using Bot.Builder.Community.Adapters.Alexa.Core.Attachments;
+using Bot.Builder.Community.Adapters.Alexa.Core.Utility;
 using Microsoft.Bot.Schema;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -81,7 +83,7 @@ namespace Bot.Builder.Community.Adapters.Alexa.Core
                 Response = new ResponseBody()
             };
 
-            if (activity == null || alexaRequest.Request is SessionEndedRequest)
+            if (activity == null || activity.Type != ActivityTypes.Message || alexaRequest.Request is SessionEndedRequest)
             {
                 response.Response.ShouldEndSession = true;
                 response.Response.OutputSpeech = new PlainTextOutputSpeech 
@@ -91,18 +93,13 @@ namespace Bot.Builder.Community.Adapters.Alexa.Core
                 return response;
             }
 
-            if (!SecurityElement.IsValidText(activity.Text))
-            {
-                activity.Text = SecurityElement.Escape(activity.Text);
-            }
-
             if (!string.IsNullOrEmpty(activity.Speak))
             {
                 response.Response.OutputSpeech = new SsmlOutputSpeech(activity.Speak);
             }
             else
             {
-                response.Response.OutputSpeech = new PlainTextOutputSpeech(activity.Text ?? string.Empty);
+                response.Response.OutputSpeech = new PlainTextOutputSpeech(activity.Text);
             }
 
             ProcessActivityAttachments(activity, response);
@@ -139,25 +136,27 @@ namespace Bot.Builder.Community.Adapters.Alexa.Core
         /// <returns>Activity</returns>
         public Activity MergeActivities(IList<Activity> activities)
         {
-            if (activities == null || activities.Count == 0)
+            if (activities == null || activities.All(a => a.Type != ActivityTypes.Message))
             {
                 return null;
             }
 
-            var activity = activities.Last();
+            var messageActivities = activities.Where(a => a.Type == ActivityTypes.Message).ToList();
 
-            if (activities.Any(a => !string.IsNullOrEmpty(a.Speak)))
+            var activity = messageActivities.Last();
+
+            if (messageActivities.Any(a => !string.IsNullOrEmpty(a.Speak)))
             {
-                var speakText = string.Join("<break strength=\"strong\"/>", activities
-                    .Select(a => !string.IsNullOrEmpty(a.Speak) ? StripSpeakTag(a.Speak) : a.Text)
+                var speakText = string.Join("<break strength=\"strong\"/>", messageActivities
+                    .Select(a => !string.IsNullOrEmpty(a.Speak) ? StripSpeakTag(a.Speak) : NormalizeActivityText(a.TextFormat, a.Text))
                     .Where(s => !string.IsNullOrEmpty(s))
                     .Select(s => s));
 
                 activity.Speak = $"<speak>{speakText}</speak>";
             }
 
-            activity.Text = string.Join(". ", activities
-                .Select(a => a.Text)
+            activity.Text = string.Join(". ", messageActivities
+                .Select(a => NormalizeActivityText(a.TextFormat, a.Text))
                 .Where(s => !string.IsNullOrEmpty(s))
                 .Select(s => s.Trim(new char[] { ' ', '.' })));
 
@@ -220,6 +219,9 @@ namespace Bot.Builder.Community.Adapters.Alexa.Core
                 case SystemExceptionRequest systemExceptionRequest:
                     activity.Value = systemExceptionRequest;
                     break;
+                default:
+                    activity.Value = skillRequest.Request;
+                    break;
             }
 
             return activity;
@@ -277,6 +279,40 @@ namespace Bot.Builder.Community.Adapters.Alexa.Core
             }
         }
 
+        private string NormalizeActivityText(string textFormat, string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            // Default to markdown if it isn't specified.
+            if (textFormat == null)
+            {
+                textFormat = TextFormatTypes.Markdown;
+            }
+
+            string plainText;
+            if (textFormat.Equals(TextFormatTypes.Plain, StringComparison.Ordinal))
+            {
+                plainText = text;
+            }
+            else if (textFormat.Equals(TextFormatTypes.Markdown, StringComparison.Ordinal))
+            {
+                plainText = AlexaMarkdownToPlaintextRenderer.Render(text);
+            }
+            else // xml format or other unknown and unsupported format.
+            {
+                plainText = string.Empty;
+            }
+
+            if (!SecurityElement.IsValidText(plainText))
+            {
+                plainText = SecurityElement.Escape(plainText);
+            }
+            return plainText;
+        }
+
         /// <summary>
         /// Under certain circumstances, such as the inclusion of certain types of directives
         /// on a response, should force the 'ShouldEndSession' property not be included on
@@ -311,32 +347,31 @@ namespace Bot.Builder.Community.Adapters.Alexa.Core
         {
             var bfCard = activity.Attachments?.FirstOrDefault(a => a.ContentType == HeroCard.ContentType || a.ContentType == SigninCard.ContentType);
 
-            if (bfCard?.ContentType == SigninCard.ContentType)
+            if (bfCard != null)
             {
-                response.Response.Card = new LinkAccountCard();
-            }
-
-            if (bfCard?.ContentType == HeroCard.ContentType)
-            {
-                response.Response.Card = CreateAlexaCardFromHeroCard(bfCard.Content as HeroCard);
-            }
-
-            if (response.Response.Card == null)
-            {
-                if (activity.Attachments?.FirstOrDefault(a => a.GetType() == typeof(CardAttachment)) is CardAttachment cardAttachment)
+                if (bfCard?.ContentType == SigninCard.ContentType)
                 {
-                    response.Response.Card = cardAttachment.Card;
+                    response.Response.Card = new LinkAccountCard();
+                }
+
+                if (bfCard?.ContentType == HeroCard.ContentType)
+                {
+                    response.Response.Card = CreateAlexaCardFromHeroCard(bfCard.Content as HeroCard);
+                }
+            }
+            else
+            {
+                var cardAttachment = activity.Attachments?.FirstOrDefault(a => a.ContentType == AlexaAttachmentContentTypes.Card);
+                if (cardAttachment != null)
+                {
+                    response.Response.Card = cardAttachment.Content as ICard;
                 }
             }
 
-            var directiveAttachments = activity.Attachments?
-                .Where(a => a.GetType() == typeof(DirectiveAttachment))
-                .Select(d => d as DirectiveAttachment);
-
-            var directives = directiveAttachments?.Select(d => d.Directive).ToList();
-            if (directives != null && directives.Any())
+            var directiveAttachments = activity.Attachments?.Where(a => a.ContentType == AlexaAttachmentContentTypes.Directive).ToList();
+            if (directiveAttachments != null && directiveAttachments.Any())
             {
-                response.Response.Directives = directives;
+                response.Response.Directives = directiveAttachments.Select(d => d.Content as IDirective).ToList();
             }
         }
 
